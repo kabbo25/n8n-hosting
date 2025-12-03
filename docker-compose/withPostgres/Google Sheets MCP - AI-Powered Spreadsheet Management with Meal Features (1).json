@@ -1,0 +1,847 @@
+{
+  "name": "Google Sheets MCP - AI-Powered Spreadsheet Management with Meal Features",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -880,
+        -104
+      ],
+      "id": "d2f40583-c2f8-4478-acde-e9ce905bf9d2",
+      "name": "Telegram Trigger",
+      "webhookId": "84880f50-011a-499c-af12-3bbc031e3e4c",
+      "executeOnce": false,
+      "credentials": {
+        "telegramApi": {
+          "id": "no0OxRmTE1wp2Olk",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a meal tracking assistant. Your job is to parse natural language messages (in English, Bengali, or mixed language) and convert them into a standardized format.\n\n**IMPORTANT: ONLY parse messages that are meal on/off COMMANDS. If the message is a question/query or doesn't contain meal on/off instructions, respond with \"INVALID_COMMAND\"**\n\n**Input Format:** User will send messages like:\n- \"ajke amar meal off\" (Today my meal is off) ✓\n- \"kabbo lunch off tomorrow\" ✓\n- \"5 tarikhe amar dinner off\" ✓\n- \"kabbo both off\" ✓\n- \"kal amar meal on\" ✓\n\n**NOT valid (these are QUERIES, not commands):**\n- \"ajker meal koto?\" (What is today's meal?) ✗\n- \"kabbo meal khabe?\" (Will Kabbo eat?) ✗\n- \"meal count koto?\" (What is meal count?) ✗\n- \"ami ki khabo?\" (What will I eat?) ✗\n\n**Output Format:** \nFor VALID commands: [name] [lunch/dinner/both] [on/off] [date_number_optional]\nFor INVALID inputs: INVALID_COMMAND\n\n**Rules:**\n1. Valid names: Lubon, Kabbo, Susmoy, Abir, Kawchar\n2. Valid meal types: lunch, dinner, both\n3. Valid status: on, off\n4. Date is optional (only include if specified)\n5. Default meal type: dinner (if not specified)\n6. Today's date is: 3 December 2024\n\n**Command Detection - Message MUST contain:**\n- A meal status indicator (on/off/na/nai/hobe/আছে/বন্ধ) AND\n- NOT be a question (no \"koto\"/\"কত\"/\"ki\"/\"কি\"/\"?\" at the end)\n\n**Date Keywords:**\n- \"ajke\" / \"today\" / \"aaj\" = no date (means today)\n- \"kal\" / \"tomorrow\" = 4\n- \"parshoo\" / \"day after tomorrow\" = 5\n- Specific dates: \"5 tarikhe\" = 5, \"15 date\" = 15\n\n**Meal Keywords:**\n- \"lunch\" / \"dupur\" / \"দুপুর\" = lunch\n- \"dinner\" / \"raat\" / \"রাত\" / \"sondha\" = dinner  \n- \"both\" / \"duitai\" / \"দুইটাই\" = both\n- If not specified = dinner\n\n**Status Keywords:**\n- \"off\" / \"na\" / \"nai\" / \"বন্ধ\" = off\n- \"on\" / \"hobe\" / \"আছে\" = on\n\n**Name Detection:**\n- If message contains sender's name or \"amar\" (my), use sender's name from context\n- Otherwise extract name from message\n\n**Examples:**\n\nInput: \"ajke amar meal off\"\nOutput: kabbo dinner off\n\nInput: \"kabbo lunch off 5\"\nOutput: kabbo lunch off 5\n\nInput: \"kal both on\"\nOutput: kabbo both on 4\n\nInput: \"ajker meal koto\" (This is a QUERY)\nOutput: INVALID_COMMAND\n\nInput: \"kabbo meal khabe ki?\" (This is a QUESTION)\nOutput: INVALID_COMMAND\n\nInput: \"meal count koto?\" (This is a QUERY)\nOutput: INVALID_COMMAND\n\nInput: \"hello\" (This is not related)\nOutput: INVALID_COMMAND\n\nRespond with ONLY the formatted command or \"INVALID_COMMAND\", no explanation.",
+              "role": "model"
+            },
+            {
+              "content": "={{ $('Telegram Trigger').item.json.message.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -400
+      ],
+      "id": "97e488e7-c67d-4d03-8781-8cffcb1a96f3",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "1N3Vc9z94KOmc7XB",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\n// Get the message text from Telegram trigger\nconst messageText = $input.first().json.content.parts[0].text.toLowerCase().trim();\nconst chatId = $('Telegram Trigger').first().json.message.chat.id;\nconst senderName = $('Telegram Trigger').first().json.message.chat.first_name;\n\n// Parse the message format: [name] [lunch/dinner] [on/off] [date (optional)]\nconst parseMealStatus = (text) => {\n  // Split the message into parts\n  const parts = text.split(/\\s+/);\n  \n  if (parts.length < 3) {\n    return {\n      success: false,\n      error: \"❌ Invalid format. Use: [name] [lunch/dinner] [on/off] [date (optional)]\\nExample: kabbo lunch off\\nOr: kabbo lunch off 15\",\n      chatId: chatId  // ✅ ADDED\n    };\n  }\n  \n  // Extract components\n  const name = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);\n  const mealType = parts[1].toLowerCase();\n  const status = parts[2].toLowerCase();\n  const customDate = parts[3] ? parseInt(parts[3]) : null;\n  \n  // Valid names from your sheet\n  const validNames = ['lubon', 'kabbo', 'susmoy', 'abir', 'kawchar'];\n  \n  if (!validNames.includes(name.toLowerCase())) {\n    return {\n      success: false,\n      error: `❌ Invalid name. Valid names: ${validNames.join(', ')}`,\n      chatId: chatId  // ✅ ADDED\n    };\n  }\n  \n  // Validate meal type\n  const validMealTypes = ['lunch', 'dinner','both'];\n  if (!validMealTypes.includes(mealType)) {\n    return {\n      success: false,\n      error: \"❌ Invalid meal type. Use: lunch or dinner\",\n      chatId: chatId  // ✅ ADDED\n    };\n  }\n  \n  // Validate status\n  const validStatuses = ['on', 'off'];\n  if (!validStatuses.includes(status)) {\n    return {\n      success: false,\n      error: \"❌ Invalid status. Use: on or off\",\n      chatId: chatId  // ✅ ADDED\n    };\n  }\n  \n  // Convert status to 1 or 0\n  const mealValue = status === 'on' ? 1 : 0;\n  \n  // Get current date in Bangladesh timezone\n  const currentDate = new Date();\n  const bdDate = new Date(currentDate.toLocaleString('en-US', { timeZone: 'Asia/Dhaka' }));\n  \n  // Use custom date if provided, otherwise use current date\n  let targetDate;\n  let day;\n  \n  if (customDate) {\n    // Validate custom date\n    if (isNaN(customDate) || customDate < 1 || customDate > 31) {\n      return {\n        success: false,\n        error: \"❌ Invalid date. Date must be between 1 and 31\",\n        chatId: chatId  // ✅ ADDED\n      };\n    }\n    \n    // Create date object for the custom date in current month\n    const year = bdDate.getFullYear();\n    const month = bdDate.getMonth();\n    targetDate = new Date(year, month, customDate);\n    \n    // Check if date is valid for current month\n    if (targetDate.getMonth() !== month) {\n      return {\n        success: false,\n        error: `❌ Invalid date. This month doesn't have day ${customDate}`,\n        chatId: chatId  // ✅ ADDED\n      };\n    }\n    \n    day = customDate;\n  } else {\n    // Use current date\n    targetDate = bdDate;\n    day = bdDate.getDate();\n  }\n  \n  // Get day of week for the target date\n  const dayOfWeek = targetDate.toLocaleDateString('en-US', { weekday: 'short' });\n  \n  // Check if it's Friday or Saturday (2 meals day)\n  const isTwoMealDay = (dayOfWeek === 'Fri' || dayOfWeek === 'Sat');\n  \n  // Prepare the meal value based on day and meal type\n  let mealValueForSheet;\n  \n  if (isTwoMealDay) {\n    // For Friday/Saturday: format is \"lunch+dinner\"\n    if (mealType === 'lunch') {\n      mealValueForSheet = mealValue+1; // Update lunch, keep dinner as 1\n    } else {\n      mealValueForSheet = mealValue+1; // Keep lunch as 1, update dinner\n    }\n  } else {\n    // For normal days (Sun-Thu): only dinner\n    if (mealType === 'lunch') {\n      return {\n        success: false,\n        error: `❌ ${dayOfWeek} (date ${day}) only has dinner. Use 'dinner' instead of 'lunch'`,\n        chatId: chatId  // ✅ ADDED\n      };\n    }\n    // Only dinner on normal days\n    mealValueForSheet = mealValue.toString();\n  }\n  \n  return {\n    success: true,\n    data: {\n      name: name,\n      mealType: mealType,\n      mealValue: mealValueForSheet,\n      date: day,\n      dayOfWeek: dayOfWeek,\n      row: day + 1, // Adding 1 because row 1 is header\n      isTwoMealDay: isTwoMealDay,\n      isCustomDate: customDate !== null,\n      // Response message\n      confirmMessage: `✅ Meal ${status.toUpperCase()}:\\n👤 Name: ${name}\\n🍽️ Meal: ${mealType}\\n📅 Date: ${day} (${dayOfWeek})${customDate ? ' [Custom Date]' : ' [Today]'}\\n${isTwoMealDay ? '📝 Two meal day (Lunch + Dinner)' : '📝 Dinner only day'}`\n    },\n    chatId: chatId\n  };\n};\n\n// Parse the message\nconst result = parseMealStatus(messageText);\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        -400
+      ],
+      "id": "fe9e2c2b-bf20-4255-9588-989f1077bdd6",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4",
+          "mode": "list",
+          "cachedResultName": "test_n8n",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Date",
+              "lookupValue": "={{ $json.data.date }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        496,
+        -200
+      ],
+      "id": "e4ffb3cb-f2a6-4db9-9794-63b026c64db0",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bH8CBiVh1m5aSheK",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "if ($input.item.json.success) {\n  // Success case\n  return {\n    chatId: $input.item.json.chatId,\n    message: $input.item.json.data.confirmMessage\n  };\n} else {\n  // Error case\n  return {\n    chatId: $input.item.json.chatId,\n    message: $input.item.json.error\n  };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        -496
+      ],
+      "id": "db0f4f62-2b4a-4b20-b588-333465f04921",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        -496
+      ],
+      "id": "67c0865c-e15c-4457-b32e-f94dea1aee00",
+      "name": "Send a text message",
+      "webhookId": "d8f139e9-5396-43a2-b4e4-e4a8047b8c44",
+      "credentials": {
+        "telegramApi": {
+          "id": "no0OxRmTE1wp2Olk",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Code in JavaScript').first().json.data;\nconst people = ['Lubon', 'Kabbo', 'Susmoy', 'Abir', 'Kawchar'];\n\n// Create update object\nconst updateData = {\n  Date: data.date,\n  Day: data.dayOfWeek,\n  row_number: data.row\n};\n\n// Set the correct person's meal value\npeople.forEach(person => {\n  // If this person matches, update with new value\n  // Otherwise, keep the existing value from the sheet\n  updateData[person] = (person === data.name) \n    ? data.mealValue \n    : $input.first().json[person]; // Dynamic property access\n});\n\nreturn updateData;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -200
+      ],
+      "id": "417b239e-bca4-4da2-bfcd-ed66a8d98ec2",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4",
+          "mode": "list",
+          "cachedResultName": "test_n8n",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.Date }}",
+            "Day": "={{ $json.Day }}",
+            "Lubon": "={{ $json.Lubon }}",
+            "Kabbo": "={{ $json.Kabbo }}",
+            "Susmoy": "={{ $json.Susmoy }}",
+            "Abir": "={{ $json.Abir }}",
+            "Kawchar": "={{ $json.Kawchar }}"
+          },
+          "matchingColumns": [
+            "Date"
+          ],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Day",
+              "displayName": "Day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lubon",
+              "displayName": "Lubon",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Kabbo",
+              "displayName": "Kabbo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Susmoy",
+              "displayName": "Susmoy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Abir",
+              "displayName": "Abir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Kawchar",
+              "displayName": "Kawchar",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        944,
+        -200
+      ],
+      "id": "c0ecba43-de2e-4e79-be52-7148246c21ce",
+      "name": "Update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bH8CBiVh1m5aSheK",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "Classify this message as QUERY, COMMAND, or BULK_UPDATE.\n\n**QUERY:** Questions about meals\n- Contains: koto, ki, ?, count, khabe\n- Examples: \"ajker meal koto\", \"kabbo khabe ki\"\n\n**COMMAND:** Individual meal on/off\n- Contains: off/on for specific person\n- Examples: \"kabbo meal off\", \"amar dinner on\"\n\n**BULK_UPDATE:** All meals off (no cooking)\n- Contains: khala nai, sobar meal off, cooking off, all off\n- Examples: \"khala nai\", \"khala nai 7\", \"sobar meal off\"\n\nRespond with only one word: QUERY, COMMAND, or BULK_UPDATE",
+              "role": "model"
+            },
+            {
+              "content": "={{ $json.message.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -656,
+        -104
+      ],
+      "id": "15286b5c-8742-453e-aa66-01f50bf3ff0d",
+      "name": "Message a model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "1N3Vc9z94KOmc7XB",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.content.parts[0].text }}",
+                    "rightValue": "COMMAND",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "59de25bf-01f6-4a64-b966-13ef37b5a5c2"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "973a7083-ba92-41bb-b885-13cd7c430807",
+                    "leftValue": "={{ $json.content.parts[0].text }}",
+                    "rightValue": "QUERY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a1d68c3c-7445-4656-86e3-66f158d1856e",
+                    "leftValue": "={{ $json.content.parts[0].text }}",
+                    "rightValue": "BULK_UPDATE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        -304,
+        -120
+      ],
+      "id": "b7c235f8-7993-4e74-9bf1-aec386436e1f",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a date extraction assistant. Your ONLY task is to extract the day number from Bengali/English user messages about meals.\n\nRULES:\n1. If user mentions TODAY (ajke, aaj, khala nai, today): Return empty string \"\"\n2. If user mentions a SPECIFIC DATE NUMBER (7 tarikh, 15 date, 20 tarikhe): Return ONLY that number (e.g., \"7\", \"15\", \"20\")\n3. Return ONLY the number, nothing else - no text, no explanation\n\nEXAMPLES:\n- \"khala nai\" → \"\"\n- \"ajke khala nai\" → \"\"\n- \"today khala nai\" → \"\"\n- \"7 tarikh khala nai\" → \"7\"\n- \"15 date khala nai\" → \"15\"\n- \"20 tarikhe khaoa nai\" → \"20\"\n- \"kal khala nai\" → \"\"\n- \"tomorrow khala nai\" → \"\"\n\nBengali date keywords: tarikh, tarikhe, date, tar\n\nIf you cannot find a specific date number, return empty string \"\".",
+              "role": "model"
+            },
+            {
+              "content": "={{ $('Telegram Trigger').item.json.message.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        192
+      ],
+      "id": "6f08bb74-d755-49ca-82df-a5e415da473d",
+      "name": "Message a model2",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "1N3Vc9z94KOmc7XB",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get Gemini's response from the nested structure\nconst geminiResponse = $json.content.parts[0].text;\n\n// Remove quotes if present (handles \"\", \"7\", etc.)\nlet geminiDate = geminiResponse.replace(/\"/g, '').trim();\n\n// Get current date in Bangladesh timezone\nconst bdtDate = new Date().toLocaleString(\"en-US\", { \n  timeZone: \"Asia/Dhaka\" \n});\nconst currentDate = new Date(bdtDate);\n\n// Determine target date\nlet targetDate;\nif (geminiDate === \"\" || !geminiDate) {\n  // Today\n  targetDate = currentDate;\n} else {\n  // Specific date - use current month and year\n  const dayNumber = parseInt(geminiDate);\n  targetDate = new Date(\n    currentDate.getFullYear(),\n    currentDate.getMonth(),\n    dayNumber\n  );\n  \n  // Convert to Bangladesh timezone\n  const bdtTargetDate = targetDate.toLocaleString(\"en-US\", { \n    timeZone: \"Asia/Dhaka\" \n  });\n  targetDate = new Date(bdtTargetDate);\n}\n\n// Get day of month (1-31)\nconst dayOfMonth = targetDate.getDate();\n\n// Get day of week\nconst days = [\"Sun\", \"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\", \"Sat\"];\nconst dayOfWeek = days[targetDate.getDay()];\n\n// Get month\nconst month = targetDate.toLocaleString(\"en-US\", { \n  month: \"long\", \n  timeZone: \"Asia/Dhaka\" \n});\n\n// Get year\nconst year = targetDate.getFullYear();\n\n// Determine if that day is weekend (Fri/Sat)\nconst isWeekend = (dayOfWeek === \"Fri\" || dayOfWeek === \"Sat\");\nconst todayMealValue = isWeekend ? \"0\" : \"0\";\n\nreturn {\n  currentDate: dayOfMonth,\n  currentDay: dayOfWeek,\n  currentMonth: month,\n  currentYear: year,\n  isWeekend: isWeekend,\n  todayMealValue: todayMealValue,\n  fullDate: `${dayOfMonth} ${month} ${year} (${dayOfWeek})`,\n  extractedDate: geminiDate || \"today\",\n  rawGeminiResponse: geminiResponse // for debugging\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        192
+      ],
+      "id": "851fd236-cec0-4695-bdd3-7f94c6af5b01",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4",
+          "mode": "list",
+          "cachedResultName": "test_n8n",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.currentDate }}",
+            "Day": "={{ $json.currentDay }}",
+            "Lubon": "={{ $json.todayMealValue }}",
+            "Kabbo": "={{ $json.todayMealValue }}",
+            "Susmoy": "={{ $json.todayMealValue }}",
+            "Abir": "={{ $json.todayMealValue }}",
+            "Kawchar": "={{ $json.todayMealValue }}"
+          },
+          "matchingColumns": [
+            "Date"
+          ],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Day",
+              "displayName": "Day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lubon",
+              "displayName": "Lubon",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Kabbo",
+              "displayName": "Kabbo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Susmoy",
+              "displayName": "Susmoy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Abir",
+              "displayName": "Abir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Kawchar",
+              "displayName": "Kawchar",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        496,
+        192
+      ],
+      "id": "84b0fa7d-d1f2-4f63-a357-9e7878fbdf79",
+      "name": "Update row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bH8CBiVh1m5aSheK",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a helpful assistant integrated with a Telegram bot that helps users check meal counts from a Google Sheets database. Your primary function is to respond to queries about meal information, particularly daily meal counts.\n\n## Sheet Structure\n\nThe Google Sheets database (test_n8n, Sheet1) contains:\n- **Date column**: Row numbers (1-31) representing dates of the month\n- **Day column**: Day of the week (Mon, Tue, Wed, Thu, Fri, Sat, Sun)\n- **Person columns**: Lubon, Kabbo, Susmoy, Abir, Kawchar\n- **Meal values**: \n  - \"2\" = 2 meals (lunch + dinner, typically on weekends)\n  - \"1\" = 1 meal\n  - \"0\" = no meal\n\n## Language Understanding\n\nUsers will primarily communicate in Bengali or mixed Bengali-English. Common queries include:\n- \"ajker meal count koto?\" (What is today's meal count?)\n- \"aj koyjon meal khabe?\" (How many people will eat today?)\n- \"total meal count\" (Total meal count)\n- \"Kawchar ajke meal khabe ki?\" (Will Kawchar eat today?)\n- Person-specific queries: \"Lubon er meal count\", \"Kabbo ajke khabe?\"\n\n## Your Task\n\nWhen a user asks about meal count:\n\n1. **Identify the date**:\n   - \"ajker\" / \"aj\" / \"today\" = today's date (extract day of month: 1-31)\n   - \"kalker\" / \"yesterday\" = yesterday's date\n   - \"agamikal\" / \"tomorrow\" = tomorrow's date\n   - Current date: December 4, 2025 (use day 4 as reference)\n\n2. **Query the Google Sheets**:\n   - Use the get row(s) tool\n   - Document: test_n8n\n   - Sheet: Sheet1\n   - Filter by Date column = the target date (row number)\n   - Example: For December 4, query row where Date = 4\n\n3. **Calculate meal count**:\n   - Parse each person's meal value:\n     - \"2\" = 2 meals\n     - \"1\" = 1 meal\n     - \"0\" = 0 meals\n   - Sum all meals: Total = Lubon + Kabbo + Susmoy + Abir + Kawchar\n   - Count people eating (anyone with value > 0)\n\n4. **Respond clearly**:\n   - Total meal count\n   - Number of people eating\n   - Breakdown by person (if asked)\n\n## Response Examples\n\n**Query**: \"ajker meal count koto?\"\n**Response**: \"Ajker (4 December, Thu) total meal count: 5\n- Lubon: 1\n- Kabbo: 1\n- Susmoy: 1\n- Abir: 1\n- Kawchar: 1\n\nTotal 5 meals, 5 jon meal khabe.\"\n\n**Query**: \"friday meal count\"\n**Response**: \"Friday (5 December) total meal count: 10\n- Lubon: 2 (2 meals)\n- Kabbo: 0 (0 meals)\n- Susmoy: 2 (2 meals)\n- Abir: 2 (2 meals)\n- Kawchar: 2 (2 meals)\n\nTotal 8 meals, 4 jon meal khabe.\"\n\n**Query**: \"Kawchar ajke khabe?\"\n**Response**: \"Haa, Kawchar ajke 1 meal khabe.\"\n\n**Query**: \"weekend meal count\"\n**Response**: \"Weekend (6 December, Sat) total meal count:\n- Lubon: 2\n- Kabbo: 2\n- Susmoy: 0\n- Abir: 2\n- Kawchar: 2\n\nTotal 8 meals, 4 jon meal khabe.\"\n\n## Calculation Logic\n\nFor each person:\n* If value is \"2\": count = 2\n* If value is \"1\": count = 1\n* If value is \"0\": count = 0\n\nTotal meals = sum of all counts\nPeople eating = count of people with value > 0\n\n## Error Handling\n\n- If date is out of range (>31): \"Invalid date\"\n- If no data found: \"Ei date er jonno kono data paoa jayni\"\n- If sheet error: \"Sheet data load korte problem hocche. Please try again.\"\n\n## Response Format\n\n- Keep responses natural and conversational\n- Use Bengali for Bengali queries, English for English queries\n- Include breakdown only if helpful\n- Be concise for simple queries\n\n## Additional Features\n\n- Can answer specific person queries: \"Lubon ajke khabe ki?\"\n- Can show day of week with date\n- Can calculate weekly totals if asked\n- Can compare different days\n\nRemember: Always be helpful, accurate, and respond in the user's preferred language. Extract the date intelligently from natural language queries.",
+              "role": "model"
+            },
+            {
+              "content": "={{ $('Telegram Trigger').item.json.message.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -208
+      ],
+      "id": "b89a386b-83e1-4768-bf38-b68000da3f34",
+      "name": "Message a model3",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "1N3Vc9z94KOmc7XB",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4",
+          "mode": "list",
+          "cachedResultName": "test_n8n",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sYrkehhOJSmK1qzextkN0KCJ0CJKXS70yIyRzZ_ckk4/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        -8,
+        16
+      ],
+      "id": "cbbb1f67-9c5c-4e22-a1ad-596c05298780",
+      "name": "Get row(s) in sheet in Google Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bH8CBiVh1m5aSheK",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.from.id }}",
+        "text": "={{ $json.content.parts[0].text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        272,
+        -104
+      ],
+      "id": "4cb5c4d3-56d9-42c9-af4a-098aac049914",
+      "name": "Send a text message1",
+      "webhookId": "ef21182d-e924-4cca-9070-cc9b2b42e158",
+      "credentials": {
+        "telegramApi": {
+          "id": "no0OxRmTE1wp2Olk",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message a model3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message a model2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet in Google Sheets": {
+      "ai_tool": [
+        [
+          {
+            "node": "Message a model3",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model3": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "65b19186-bd39-4ea4-802f-1af7056cba3e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "53946f8d441dbf91f1909b5fef5ca90722a3967d4ea5d6a4b2ad5b23032a06a5"
+  },
+  "id": "11X6xJ5vGoymcvLj",
+  "tags": []
+}
